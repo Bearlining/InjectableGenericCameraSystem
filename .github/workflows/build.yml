@@ -1,0 +1,112 @@
+name: Build IGCS Camera Tools
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/**']
+
+jobs:
+  build:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+          vsversion: '2022'
+
+      # ---- ACO (Assassin's Creed Odyssey) ----
+      - name: Build ACO Camera (Release/x64)
+        run: |
+          msbuild Cameras\AssassinsCreedOdyssey\CameraTools.sln `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /m `
+            /v:minimal
+        working-directory: ${{ github.workspace }}
+
+      # ---- TEW2 (The Evil Within 2) ----
+      - name: Build TEW2 Camera (Release/x64)
+        run: |
+          msbuild Cameras\TEW2\CameraTools.sln `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /m `
+            /v:minimal
+        working-directory: ${{ github.workspace }}
+
+      # ---- IGCSInjector (injector tool) ----
+      - name: Build IGCSInjector (Release/x64)
+        run: |
+          msbuild Tools\IGCSInjector\IGCSInjector.sln `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /m `
+            /v:minimal
+        working-directory: ${{ github.workspace }}
+
+      # ---- 模糊查找 + 复制 ----
+      - name: Prepare artifacts
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          
+          # ACO DLL
+          $aco = Get-ChildItem -Path . -Recurse -Filter "ACOdysseyCameraTools.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($aco) { 
+            Copy-Item $aco.FullName -Destination "dist\ACOdysseyCameraTools.dll" -Force 
+            Write-Host "ACO DLL: $($aco.FullName)"
+          } else { 
+            Write-Error "ACOdysseyCameraTools.dll NOT FOUND" 
+            exit 1 
+          }
+          
+          # TEW2 DLL
+          $tew2 = Get-ChildItem -Path . -Recurse -Filter "*.dll" -ErrorAction SilentlyContinue |
+                  Where-Object { $_.Name -match "TEW2|EvilWithin|EvilWithin2" } |
+                  Select-Object -First 1
+          if (-not $tew2) {
+            $tew2 = Get-ChildItem -Path "Cameras\TEW2" -Recurse -Filter "*.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if ($tew2) { 
+            Copy-Item $tew2.FullName -Destination "dist\TEW2CameraTools.dll" -Force 
+            Write-Host "TEW2 DLL: $($tew2.FullName)"
+          } else { 
+            Write-Warning "TEW2 DLL not found"
+          }
+          
+          # IGCSInjector
+          $exe = Get-ChildItem -Path . -Recurse -Filter "IGCSInjector.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($exe) { 
+            Copy-Item $exe.FullName -Destination "dist\IGCSInjector.exe" -Force 
+            Write-Host "Injector EXE: $($exe.FullName)"
+          } else { 
+            Write-Error "IGCSInjector.exe NOT FOUND" 
+            exit 1 
+          }
+          
+          $ini = Get-ChildItem -Path . -Recurse -Filter "IGCSInjector.ini" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($ini) { 
+            Copy-Item $ini.FullName -Destination "dist\IGCSInjector.ini" -Force 
+          }
+          
+          Write-Host "=== Final artifacts ==="
+          Get-ChildItem dist
+        working-directory: ${{ github.workspace }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: igcs-multi-build
+          path: dist/*
+          if-no-files-found: warn
+          retention-days: 7
